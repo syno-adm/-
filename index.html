@@ -803,8 +803,30 @@ textarea{resize:vertical;min-height:60px}
  </div>
  <hr class="divider">
  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
- <div class="sec-title" style="margin:0">菜單品項（每個品項可設單價）</div>
- <button class="btn btn-outline btn-sm" onclick="addMenuItem()">＋ 新增品項</button>
+  <div class="sec-title" style="margin:0">菜單品項（每個品項可設單價）</div>
+  <div style="display:flex;gap:6px">
+   <label class="btn btn-outline btn-sm" style="cursor:pointer;margin:0">
+    📷 上傳菜單辨識
+    <input type="file" accept="image/*,.pdf" style="display:none" onchange="scanMenuFile(this)">
+   </label>
+   <button class="btn btn-outline btn-sm" onclick="addMenuItem()">＋ 新增品項</button>
+  </div>
+ </div>
+ <!-- 辨識結果區塊 -->
+ <div id="scanResultArea" style="display:none;margin-bottom:12px;border:1px solid var(--border);border-radius:var(--r);overflow:hidden">
+  <div style="background:var(--green-light);padding:8px 12px;display:flex;align-items:center;justify-content:space-between">
+   <span style="font-size:13px;font-weight:500;color:var(--green)">辨識結果 — 勾選要加入的品項</span>
+   <div style="display:flex;gap:6px">
+    <button class="btn btn-primary btn-sm" onclick="importScannedItems()">匯入勾選項目</button>
+    <button class="btn btn-outline btn-sm" onclick="document.getElementById('scanResultArea').style.display='none'">關閉</button>
+   </div>
+  </div>
+  <div id="scanResultList" style="padding:8px 12px;max-height:240px;overflow-y:auto"></div>
+  <div id="scanRawText" style="display:none;padding:8px 12px;font-size:11px;color:var(--text3);font-family:var(--mono);white-space:pre-wrap;border-top:1px solid var(--border);max-height:120px;overflow-y:auto"></div>
+  <div style="padding:6px 12px;border-top:1px solid var(--border);display:flex;gap:8px;align-items:center">
+   <span id="scanStatus" style="font-size:12px;color:var(--text3)"></span>
+   <button style="background:none;border:none;cursor:pointer;font-size:11px;color:var(--text3)" onclick="toggleRawText()">查看原始文字</button>
+  </div>
  </div>
  <div id="menuItemsContainer"></div>
  </div>
@@ -1734,19 +1756,6 @@ const FIXED_OTHER_COSTS=[
  ]},
  {name:'衛生紙',  vendor:'大強紙業', fixed:true, defaultRows:[{vendor:'大強紙業', itemName:'', price:1160, qty:0}]},
 ];
-function ensureFixedRows(item){
-  const def=FIXED_OTHER_COSTS.find(f=>f.name===item.name);
-  if(!item.rows||!item.rows.length){
-    item.rows=def?.defaultRows
-      ? def.defaultRows.map(r=>({...r}))
-      : [{vendor:def?.vendor||'',itemName:'',price:0,qty:0}];
-  } else if(def?.defaultRows){
-    // 若已有 rows 但單價全為 0，套用 defaultRows 的預設單價
-    item.rows.forEach((r,i)=>{
-      if(!r.price && def.defaultRows[i]?.price) r.price=def.defaultRows[i].price;
-    });
-  }
-}
 let otherCosts=(()=>{
  const saved=JSON.parse(localStorage.getItem('wb_other_costs')||'null');
  if(saved){
@@ -2317,7 +2326,97 @@ function openVendorModal(id){
  renderMenuItems();
  document.getElementById('vendorModal').style.display='flex';
 }
-function closeVendorModal(){ document.getElementById('vendorModal').style.display='none'; }
+function closeVendorModal(){
+  document.getElementById('vendorModal').style.display='none';
+  // 清除辨識結果
+  document.getElementById('scanResultArea').style.display='none';
+  document.getElementById('scanResultList').innerHTML='';
+  document.getElementById('scanRawText').textContent='';
+  document.getElementById('scanStatus').textContent='';
+}
+
+// 上傳菜單圖片並辨識
+async function scanMenuFile(input){
+  const file = input.files[0];
+  if(!file) return;
+  if(!GAS_API_URL || !GAS_API_URL.trim()){
+    alert('請先設定 GAS_API_URL');
+    return;
+  }
+
+  const statusEl = document.getElementById('scanStatus');
+  const resultArea = document.getElementById('scanResultArea');
+  const resultList = document.getElementById('scanResultList');
+  resultArea.style.display='block';
+  resultList.innerHTML='<div style="padding:8px;color:var(--text3);font-size:13px">辨識中，請稍候...</div>';
+  statusEl.textContent='';
+
+  try {
+    // 讀取檔案為 base64
+    const base64 = await new Promise((res, rej) => {
+      const reader = new FileReader();
+      reader.onload = e => res(e.target.result.split(',')[1]);
+      reader.onerror = rej;
+      reader.readAsDataURL(file);
+    });
+
+    const res = await fetchWithTimeout(GAS_API_URL, 30000, {
+      method: 'POST',
+      redirect: 'follow',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action:'scanMenu', imageBase64:base64, mimeType:file.type })
+    });
+
+    const result = await res.json();
+
+    if(!result.success){
+      resultList.innerHTML=`<div style="padding:8px;color:var(--red);font-size:13px">辨識失敗：${result.error||'未知錯誤'}</div>`;
+      return;
+    }
+
+    // 儲存原始文字
+    document.getElementById('scanRawText').textContent = result.rawText || '';
+
+    if(!result.items || result.items.length === 0){
+      resultList.innerHTML='<div style="padding:8px;color:var(--text3);font-size:13px">未能辨識出品項，請嘗試查看原始文字手動輸入</div>';
+      statusEl.textContent=`辨識完成，共 0 項`;
+      return;
+    }
+
+    // 顯示辨識結果（可勾選）
+    resultList.innerHTML = result.items.map((item, i) => `
+      <label style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border);cursor:pointer">
+        <input type="checkbox" data-idx="${i}" data-name="${item.name.replace(/"/g,'&quot;')}" data-price="${item.price}" checked>
+        <span style="flex:1;font-size:13px">${item.name}</span>
+        <span style="font-family:var(--mono);font-size:13px;color:var(--text2)">$${item.price}</span>
+      </label>`).join('');
+
+    statusEl.textContent=`辨識完成，共 ${result.items.length} 項`;
+
+  } catch(err) {
+    resultList.innerHTML=`<div style="padding:8px;color:var(--red);font-size:13px">辨識失敗：${err.message}</div>`;
+  }
+
+  // 清除 file input 讓同一張圖可以重新上傳
+  input.value='';
+}
+
+// 匯入勾選的品項到菜單
+function importScannedItems(){
+  const checks = document.querySelectorAll('#scanResultList input[type=checkbox]:checked');
+  if(checks.length === 0){ alert('請至少勾選一個品項'); return; }
+  checks.forEach(cb => {
+    tempMenuItems.push({ name: cb.dataset.name, price: +cb.dataset.price });
+  });
+  renderMenuItems();
+  document.getElementById('scanResultArea').style.display='none';
+}
+
+// 切換原始文字顯示
+function toggleRawText(){
+  const el = document.getElementById('scanRawText');
+  el.style.display = el.style.display==='none' ? 'block' : 'none';
+}
 function addMenuItem(){ tempMenuItems.push({name:'',price:0}); renderMenuItems(); }
 function removeMenuItem(i){ tempMenuItems.splice(i,1); renderMenuItems(); }
 function renderMenuItems(){
@@ -3053,15 +3152,6 @@ function restoreOpenEntries(){
    if(icon){ icon.textContent='▾'; }
  });
 }
-function expandAll(type){
- document.querySelectorAll('.entry-body-'+type).forEach(el=>el.style.display='');
- document.querySelectorAll('.entry-icon-'+type).forEach(el=>el.textContent='▾');
-}
-function collapseAll(type){
- document.querySelectorAll('.entry-body-'+type).forEach(el=>el.style.display='none');
- document.querySelectorAll('.entry-icon-'+type).forEach(el=>el.textContent='▸');
-}
-
 function entryHead(id,type,dateLabel,vendorName,tagHtml,extraHtml,editBtn=''){
  return `<div class="sched-entry" style="margin-bottom:6px">
  <div class="sched-entry-head" style="cursor:pointer" onclick="toggleEntry('${id}')">
@@ -4292,11 +4382,11 @@ function buildYearDataFromBuiltin(year){
 /**
  * fetch 加上 timeout 保護
  */
-function fetchWithTimeout(url, ms){
+function fetchWithTimeout(url, ms, options){
   return Promise.race([
-    fetch(url),
+    options ? fetch(url, options) : fetch(url),
     new Promise((_, reject) =>
-      setTimeout(() => reject(new Error(`Timeout after ${ms}ms`)), ms)
+      setTimeout(() => reject(new Error('Timeout after '+ms+'ms')), ms)
     )
   ]);
 }
