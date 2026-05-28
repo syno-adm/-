@@ -183,6 +183,7 @@ textarea{resize:vertical;min-height:60px}
 .week-group-body.open{display:block}
 .vtab{transition:all .12s}
 </style>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 </head>
 <body>
 
@@ -2335,70 +2336,95 @@ function closeVendorModal(){
   document.getElementById('scanStatus').textContent='';
 }
 
-// 上傳菜單圖片並辨識
+// 上傳菜單圖片並辨識（使用 Tesseract.js，本地執行，免費無需 API）
 async function scanMenuFile(input){
   const file = input.files[0];
   if(!file) return;
-  if(!GAS_API_URL || !GAS_API_URL.trim()){
-    alert('請先設定 GAS_API_URL');
-    return;
-  }
 
   const statusEl = document.getElementById('scanStatus');
   const resultArea = document.getElementById('scanResultArea');
   const resultList = document.getElementById('scanResultList');
   resultArea.style.display='block';
-  resultList.innerHTML='<div style="padding:8px;color:var(--text3);font-size:13px">辨識中，請稍候...</div>';
+  resultList.innerHTML='<div style="padding:8px;color:var(--text3);font-size:13px">載入辨識引擎中...</div>';
   statusEl.textContent='';
 
   try {
-    // 讀取檔案為 base64
-    const base64 = await new Promise((res, rej) => {
-      const reader = new FileReader();
-      reader.onload = e => res(e.target.result.split(',')[1]);
-      reader.onerror = rej;
-      reader.readAsDataURL(file);
+    // 建立 Tesseract Worker（中文繁體 + 英文）
+    const worker = await Tesseract.createWorker('chi_tra+eng', 1, {
+      logger: m => {
+        if(m.status === 'recognizing text'){
+          statusEl.textContent = `辨識中 ${Math.round(m.progress*100)}%`;
+        } else if(m.status.includes('load')||m.status.includes('init')){
+          resultList.innerHTML = `<div style="padding:8px;color:var(--text3);font-size:13px">${m.status}...</div>`;
+        }
+      }
     });
 
-    const res = await fetchWithTimeout(GAS_API_URL, 30000, {
-      method: 'POST',
-      redirect: 'follow',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ action:'scanMenu', imageBase64:base64, mimeType:file.type })
-    });
+    const { data } = await worker.recognize(file);
+    await worker.terminate();
 
-    const result = await res.json();
+    const rawText = data.text || '';
+    document.getElementById('scanRawText').textContent = rawText;
 
-    if(!result.success){
-      resultList.innerHTML=`<div style="padding:8px;color:var(--red);font-size:13px">辨識失敗：${result.error||'未知錯誤'}</div>`;
+    // 解析品名+價格
+    const items = parseMenuTextClient(rawText);
+
+    if(!items.length){
+      resultList.innerHTML='<div style="padding:8px;color:var(--text3);font-size:13px">未能辨識出品項，請點「查看原始文字」手動確認</div>';
+      statusEl.textContent='辨識完成，共 0 項';
       return;
     }
 
-    // 儲存原始文字
-    document.getElementById('scanRawText').textContent = result.rawText || '';
-
-    if(!result.items || result.items.length === 0){
-      resultList.innerHTML='<div style="padding:8px;color:var(--text3);font-size:13px">未能辨識出品項，請嘗試查看原始文字手動輸入</div>';
-      statusEl.textContent=`辨識完成，共 0 項`;
-      return;
-    }
-
-    // 顯示辨識結果（可勾選）
-    resultList.innerHTML = result.items.map((item, i) => `
+    resultList.innerHTML = items.map((item,i) => `
       <label style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border);cursor:pointer">
         <input type="checkbox" data-idx="${i}" data-name="${item.name.replace(/"/g,'&quot;')}" data-price="${item.price}" checked>
         <span style="flex:1;font-size:13px">${item.name}</span>
         <span style="font-family:var(--mono);font-size:13px;color:var(--text2)">$${item.price}</span>
       </label>`).join('');
 
-    statusEl.textContent=`辨識完成，共 ${result.items.length} 項`;
+    statusEl.textContent=`辨識完成，共 ${items.length} 項`;
 
   } catch(err) {
     resultList.innerHTML=`<div style="padding:8px;color:var(--red);font-size:13px">辨識失敗：${err.message}</div>`;
+    statusEl.textContent='';
   }
 
-  // 清除 file input 讓同一張圖可以重新上傳
   input.value='';
+}
+
+// 前端版本的菜單文字解析（與 GAS parseMenuText 邏輯相同）
+function parseMenuTextClient(text){
+  const lines = text.split('
+').map(l=>l.trim()).filter(l=>l.length>0);
+  const items = [];
+  lines.forEach(line=>{
+    const cleaned = line.replace(/\.{2,}/g,' ').replace(/_{2,}/g,' ').replace(/\s+/g,' ').trim();
+    let name='', price=0;
+    // 品名在前，價格在後
+    const m1 = cleaned.match(/^(.+?)\s*[$＄]?\s*(\d+)\s*[元円]?\s*$/);
+    if(m1 && m1[1].length>=2){
+      name = m1[1].replace(/[$＄元円\s]+$/,'').trim();
+      price = parseInt(m1[2]);
+    }
+    // 價格在前，品名在後
+    if(!name){
+      const m2 = cleaned.match(/^[$＄]?\s*(\d+)\s*[元円]?\s+(.+)$/);
+      if(m2 && m2[2].length>=2){
+        price = parseInt(m2[1]);
+        name = m2[2].trim();
+      }
+    }
+    if(name && price>=1 && price<=9999 && !/^\d+$/.test(name)){
+      name = name.replace(/[$＄]\d+/g,'').replace(/\d+[元円]/g,'').trim();
+      if(name.length>=2) items.push({name, price});
+    }
+  });
+  const seen = new Set();
+  return items.filter(item=>{
+    if(seen.has(item.name)) return false;
+    seen.add(item.name);
+    return true;
+  });
 }
 
 // 匯入勾選的品項到菜單
