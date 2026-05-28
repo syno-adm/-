@@ -2353,11 +2353,17 @@ async function scanMenuFile(input){
     const worker = await Tesseract.createWorker('chi_tra+eng', 1, {
       logger: m => {
         if(m.status === 'recognizing text'){
-          statusEl.textContent = `辨識中 ${Math.round(m.progress*100)}%`;
+          statusEl.textContent = '辨識中 ' + Math.round(m.progress*100) + '%';
         } else if(m.status.includes('load')||m.status.includes('init')){
-          resultList.innerHTML = `<div style="padding:8px;color:var(--text3);font-size:13px">${m.status}...</div>`;
+          resultList.innerHTML = '<div style="padding:8px;color:var(--text3);font-size:13px">' + m.status + '...</div>';
         }
       }
+    });
+
+    // PSM 6：假設單一文字區塊，適合菜單版面
+    await worker.setParameters({
+      tessedit_pageseg_mode: '6',
+      preserve_interword_spaces: '1',
     });
 
     const { data } = await worker.recognize(file);
