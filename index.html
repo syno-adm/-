@@ -816,14 +816,14 @@ textarea{resize:vertical;min-height:60px}
  <div id="menuPreviewArea" style="display:none;margin-bottom:12px;border:1px solid var(--border);border-radius:var(--r);overflow:hidden">
   <div style="background:var(--green-light);padding:8px 12px;display:flex;align-items:center;justify-content:space-between">
    <span style="font-size:13px;font-weight:500;color:var(--green)">菜單圖片 — 對照圖片輸入品項</span>
-   <button class="btn btn-outline btn-sm" onclick="document.getElementById('menuPreviewArea').style.display='none'">關閉</button>
+   <div style="display:flex;gap:6px;align-items:center">
+    <span id="menuPreviewHint" style="font-size:11px;color:var(--green)">點圖片放大並排顯示</span>
+    <button class="btn btn-outline btn-sm" onclick="closeMenuPreview()">關閉</button>
+   </div>
   </div>
-  <div style="text-align:center;padding:8px;background:var(--surface2)">
-   <img id="menuPreviewImg" src="" style="max-width:100%;max-height:320px;object-fit:contain;border-radius:4px;cursor:zoom-in"
-     onclick="this.style.maxHeight=this.style.maxHeight==='none'?'320px':'none'">
-  </div>
-  <div style="padding:6px 12px;border-top:1px solid var(--border)">
-   <span style="font-size:11px;color:var(--text3)">點擊圖片可放大／縮小</span>
+  <div style="padding:8px;background:var(--surface2);text-align:center">
+   <img id="menuPreviewImg" src="" style="max-width:100%;max-height:240px;object-fit:contain;border-radius:4px;cursor:zoom-in"
+     onclick="toggleMenuPreviewExpand()">
   </div>
  </div>
  <div id="menuItemsContainer"></div>
@@ -2326,11 +2326,7 @@ function openVendorModal(id){
 }
 function closeVendorModal(){
   document.getElementById('vendorModal').style.display='none';
-  // 清除菜單預覽
-  const pa = document.getElementById('menuPreviewArea');
-  if(pa) pa.style.display='none';
-  const img = document.getElementById('menuPreviewImg');
-  if(img) img.src='';
+  closeMenuPreview();
 }
 
 // 上傳菜單圖片並顯示預覽
@@ -2342,12 +2338,94 @@ function previewMenuFile(input){
     const img = document.getElementById('menuPreviewImg');
     const area = document.getElementById('menuPreviewArea');
     img.src = e.target.result;
-    img.style.maxHeight = '320px';
+    img.style.maxHeight = '240px';
+    img.style.cursor = 'zoom-in';
     area.style.display = 'block';
+    // 重置並排狀態
+    _menuExpanded = false;
+    document.getElementById('menuPreviewHint').textContent = '點圖片放大並排顯示';
     area.scrollIntoView({behavior:'smooth', block:'nearest'});
   };
   reader.readAsDataURL(file);
   input.value='';
+}
+
+let _menuExpanded = false;
+
+function toggleMenuPreviewExpand(){
+  const img = document.getElementById('menuPreviewImg');
+  const area = document.getElementById('menuPreviewArea');
+  const menuContainer = document.getElementById('menuItemsContainer');
+  const hint = document.getElementById('menuPreviewHint');
+
+  _menuExpanded = !_menuExpanded;
+
+  if(_menuExpanded){
+    // 放大：圖片和品項並排
+    area.style.position = 'sticky';
+    area.style.top = '60px';
+    area.style.zIndex = '10';
+    area.style.marginBottom = '0';
+    img.style.maxHeight = 'calc(100vh - 200px)';
+    img.style.cursor = 'zoom-out';
+    hint.textContent = '點圖片縮小';
+    // 圖片區移到側邊
+    const wrapper = document.getElementById('menuSideBySideWrapper');
+    if(!wrapper){
+      // 建立並排容器
+      const w = document.createElement('div');
+      w.id = 'menuSideBySideWrapper';
+      w.style.cssText = 'display:flex;gap:12px;align-items:flex-start';
+      // 圖片側
+      const imgSide = document.createElement('div');
+      imgSide.id = 'menuImgSide';
+      imgSide.style.cssText = 'flex:0 0 45%;position:sticky;top:60px;max-height:calc(100vh-200px);overflow-y:auto';
+      // 品項側
+      const editSide = document.createElement('div');
+      editSide.id = 'menuEditSide';
+      editSide.style.cssText = 'flex:1;min-width:0';
+
+      area.parentNode.insertBefore(w, area);
+      imgSide.appendChild(area);
+      editSide.appendChild(menuContainer);
+      w.appendChild(imgSide);
+      w.appendChild(editSide);
+    }
+  } else {
+    // 縮小：恢復原本上下排列
+    img.style.maxHeight = '240px';
+    img.style.cursor = 'zoom-in';
+    hint.textContent = '點圖片放大並排顯示';
+    area.style.position = '';
+    area.style.top = '';
+    area.style.zIndex = '';
+    area.style.marginBottom = '12px';
+    const wrapper = document.getElementById('menuSideBySideWrapper');
+    if(wrapper){
+      const parent = wrapper.parentNode;
+      parent.insertBefore(area, wrapper);
+      parent.insertBefore(menuContainer, wrapper);
+      wrapper.remove();
+    }
+  }
+}
+
+function closeMenuPreview(){
+  const area = document.getElementById('menuPreviewArea');
+  const menuContainer = document.getElementById('menuItemsContainer');
+  // 若在並排模式，先還原
+  if(_menuExpanded){
+    const wrapper = document.getElementById('menuSideBySideWrapper');
+    if(wrapper){
+      const parent = wrapper.parentNode;
+      parent.insertBefore(area, wrapper);
+      parent.insertBefore(menuContainer, wrapper);
+      wrapper.remove();
+    }
+    _menuExpanded = false;
+  }
+  area.style.display = 'none';
+  document.getElementById('menuPreviewImg').src = '';
 }
 function addMenuItem(){ tempMenuItems.push({name:'',price:0}); renderMenuItems(); }
 function removeMenuItem(i){ tempMenuItems.splice(i,1); renderMenuItems(); }
