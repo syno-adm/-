@@ -183,7 +183,6 @@ textarea{resize:vertical;min-height:60px}
 .week-group-body.open{display:block}
 .vtab{transition:all .12s}
 </style>
-  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 </head>
 <body>
 
@@ -807,26 +806,24 @@ textarea{resize:vertical;min-height:60px}
   <div class="sec-title" style="margin:0">菜單品項（每個品項可設單價）</div>
   <div style="display:flex;gap:6px">
    <label class="btn btn-outline btn-sm" style="cursor:pointer;margin:0">
-    📷 上傳菜單辨識
-    <input type="file" accept="image/*,.pdf" style="display:none" onchange="scanMenuFile(this)">
+    📷 上傳菜單圖片
+    <input type="file" accept="image/*" style="display:none" onchange="previewMenuFile(this)">
    </label>
    <button class="btn btn-outline btn-sm" onclick="addMenuItem()">＋ 新增品項</button>
   </div>
  </div>
- <!-- 辨識結果區塊 -->
- <div id="scanResultArea" style="display:none;margin-bottom:12px;border:1px solid var(--border);border-radius:var(--r);overflow:hidden">
+ <!-- 菜單圖片預覽區塊 -->
+ <div id="menuPreviewArea" style="display:none;margin-bottom:12px;border:1px solid var(--border);border-radius:var(--r);overflow:hidden">
   <div style="background:var(--green-light);padding:8px 12px;display:flex;align-items:center;justify-content:space-between">
-   <span style="font-size:13px;font-weight:500;color:var(--green)">辨識結果 — 勾選要加入的品項</span>
-   <div style="display:flex;gap:6px">
-    <button class="btn btn-primary btn-sm" onclick="importScannedItems()">匯入勾選項目</button>
-    <button class="btn btn-outline btn-sm" onclick="document.getElementById('scanResultArea').style.display='none'">關閉</button>
-   </div>
+   <span style="font-size:13px;font-weight:500;color:var(--green)">菜單圖片 — 對照圖片輸入品項</span>
+   <button class="btn btn-outline btn-sm" onclick="document.getElementById('menuPreviewArea').style.display='none'">關閉</button>
   </div>
-  <div id="scanResultList" style="padding:8px 12px;max-height:240px;overflow-y:auto"></div>
-  <div id="scanRawText" style="display:none;padding:8px 12px;font-size:11px;color:var(--text3);font-family:var(--mono);white-space:pre-wrap;border-top:1px solid var(--border);max-height:120px;overflow-y:auto"></div>
-  <div style="padding:6px 12px;border-top:1px solid var(--border);display:flex;gap:8px;align-items:center">
-   <span id="scanStatus" style="font-size:12px;color:var(--text3)"></span>
-   <button style="background:none;border:none;cursor:pointer;font-size:11px;color:var(--text3)" onclick="toggleRawText()">查看原始文字</button>
+  <div style="text-align:center;padding:8px;background:var(--surface2)">
+   <img id="menuPreviewImg" src="" style="max-width:100%;max-height:320px;object-fit:contain;border-radius:4px;cursor:zoom-in"
+     onclick="this.style.maxHeight=this.style.maxHeight==='none'?'320px':'none'">
+  </div>
+  <div style="padding:6px 12px;border-top:1px solid var(--border)">
+   <span style="font-size:11px;color:var(--text3)">點擊圖片可放大／縮小</span>
   </div>
  </div>
  <div id="menuItemsContainer"></div>
@@ -2329,124 +2326,28 @@ function openVendorModal(id){
 }
 function closeVendorModal(){
   document.getElementById('vendorModal').style.display='none';
-  // 清除辨識結果
-  document.getElementById('scanResultArea').style.display='none';
-  document.getElementById('scanResultList').innerHTML='';
-  document.getElementById('scanRawText').textContent='';
-  document.getElementById('scanStatus').textContent='';
+  // 清除菜單預覽
+  const pa = document.getElementById('menuPreviewArea');
+  if(pa) pa.style.display='none';
+  const img = document.getElementById('menuPreviewImg');
+  if(img) img.src='';
 }
 
-// 上傳菜單圖片並辨識（使用 Tesseract.js，本地執行，免費無需 API）
-async function scanMenuFile(input){
+// 上傳菜單圖片並顯示預覽
+function previewMenuFile(input){
   const file = input.files[0];
   if(!file) return;
-
-  const statusEl = document.getElementById('scanStatus');
-  const resultArea = document.getElementById('scanResultArea');
-  const resultList = document.getElementById('scanResultList');
-  resultArea.style.display='block';
-  resultList.innerHTML='<div style="padding:8px;color:var(--text3);font-size:13px">載入辨識引擎中...</div>';
-  statusEl.textContent='';
-
-  try {
-    // 建立 Tesseract Worker（中文繁體 + 英文）
-    const worker = await Tesseract.createWorker('chi_tra+eng', 1, {
-      logger: m => {
-        if(m.status === 'recognizing text'){
-          statusEl.textContent = '辨識中 ' + Math.round(m.progress*100) + '%';
-        } else if(m.status.includes('load')||m.status.includes('init')){
-          resultList.innerHTML = '<div style="padding:8px;color:var(--text3);font-size:13px">' + m.status + '...</div>';
-        }
-      }
-    });
-
-    // PSM 6：假設單一文字區塊，適合菜單版面
-    await worker.setParameters({
-      tessedit_pageseg_mode: '6',
-      preserve_interword_spaces: '1',
-    });
-
-    const { data } = await worker.recognize(file);
-    await worker.terminate();
-
-    const rawText = data.text || '';
-    document.getElementById('scanRawText').textContent = rawText;
-
-    // 解析品名+價格
-    const items = parseMenuTextClient(rawText);
-
-    if(!items.length){
-      resultList.innerHTML='<div style="padding:8px;color:var(--text3);font-size:13px">未能辨識出品項，請點「查看原始文字」手動確認</div>';
-      statusEl.textContent='辨識完成，共 0 項';
-      return;
-    }
-
-    resultList.innerHTML = items.map((item,i) => `
-      <label style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border);cursor:pointer">
-        <input type="checkbox" data-idx="${i}" data-name="${item.name.replace(/"/g,'&quot;')}" data-price="${item.price}" checked>
-        <span style="flex:1;font-size:13px">${item.name}</span>
-        <span style="font-family:var(--mono);font-size:13px;color:var(--text2)">$${item.price}</span>
-      </label>`).join('');
-
-    statusEl.textContent=`辨識完成，共 ${items.length} 項`;
-
-  } catch(err) {
-    resultList.innerHTML=`<div style="padding:8px;color:var(--red);font-size:13px">辨識失敗：${err.message}</div>`;
-    statusEl.textContent='';
-  }
-
+  const reader = new FileReader();
+  reader.onload = e => {
+    const img = document.getElementById('menuPreviewImg');
+    const area = document.getElementById('menuPreviewArea');
+    img.src = e.target.result;
+    img.style.maxHeight = '320px';
+    area.style.display = 'block';
+    area.scrollIntoView({behavior:'smooth', block:'nearest'});
+  };
+  reader.readAsDataURL(file);
   input.value='';
-}
-
-// 前端版本的菜單文字解析（與 GAS parseMenuText 邏輯相同）
-function parseMenuTextClient(text){
-  const lines = text.split('\n').map(l=>l.trim()).filter(l=>l.length>0);
-  const items = [];
-  lines.forEach(line=>{
-    const cleaned = line.replace(/\.{2,}/g,' ').replace(/_{2,}/g,' ').replace(/\s+/g,' ').trim();
-    let name='', price=0;
-    // 品名在前，價格在後
-    const m1 = cleaned.match(/^(.+?)\s*[$＄]?\s*(\d+)\s*[元円]?\s*$/);
-    if(m1 && m1[1].length>=2){
-      name = m1[1].replace(/[$＄元円\s]+$/,'').trim();
-      price = parseInt(m1[2]);
-    }
-    // 價格在前，品名在後
-    if(!name){
-      const m2 = cleaned.match(/^[$＄]?\s*(\d+)\s*[元円]?\s+(.+)$/);
-      if(m2 && m2[2].length>=2){
-        price = parseInt(m2[1]);
-        name = m2[2].trim();
-      }
-    }
-    if(name && price>=1 && price<=9999 && !/^\d+$/.test(name)){
-      name = name.replace(/[$＄]\d+/g,'').replace(/\d+[元円]/g,'').trim();
-      if(name.length>=2) items.push({name, price});
-    }
-  });
-  const seen = new Set();
-  return items.filter(item=>{
-    if(seen.has(item.name)) return false;
-    seen.add(item.name);
-    return true;
-  });
-}
-
-// 匯入勾選的品項到菜單
-function importScannedItems(){
-  const checks = document.querySelectorAll('#scanResultList input[type=checkbox]:checked');
-  if(checks.length === 0){ alert('請至少勾選一個品項'); return; }
-  checks.forEach(cb => {
-    tempMenuItems.push({ name: cb.dataset.name, price: +cb.dataset.price });
-  });
-  renderMenuItems();
-  document.getElementById('scanResultArea').style.display='none';
-}
-
-// 切換原始文字顯示
-function toggleRawText(){
-  const el = document.getElementById('scanRawText');
-  el.style.display = el.style.display==='none' ? 'block' : 'none';
 }
 function addMenuItem(){ tempMenuItems.push({name:'',price:0}); renderMenuItems(); }
 function removeMenuItem(i){ tempMenuItems.splice(i,1); renderMenuItems(); }
