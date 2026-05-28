@@ -2394,8 +2394,7 @@ async function scanMenuFile(input){
 
 // 前端版本的菜單文字解析（與 GAS parseMenuText 邏輯相同）
 function parseMenuTextClient(text){
-  const lines = text.split('
-').map(l=>l.trim()).filter(l=>l.length>0);
+  const lines = text.split('\n').map(l=>l.trim()).filter(l=>l.length>0);
   const items = [];
   lines.forEach(line=>{
     const cleaned = line.replace(/\.{2,}/g,' ').replace(/_{2,}/g,' ').replace(/\s+/g,' ').trim();
